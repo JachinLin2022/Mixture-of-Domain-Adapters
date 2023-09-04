@@ -140,4 +140,5 @@ results/*
 *.ckpt
 
 models/
+model/
 datasets/

@@ -28,9 +28,17 @@ class TokenizedDataset(Dataset):
             text = text[self.field]
         token_list = self.tokenizer.encode(
             text, truncation=True, max_length=self.maxlen
-        )
+        )  
         position_ids = list(range(len(token_list)))
         attention_mask = [1] * len(token_list)
+        
+        
+        # res = dict(
+        #     input_ids=[torch.tensor(token_list['input_ids'][i]) for i in range(len(text))],
+        #     position_ids=[list(range(len(token_list['input_ids'][i]))) for i in range(len(text))],
+        #     attention_mask=[torch.tensor([1] * len(token_list['input_ids'][i])) for i in range(len(text))],
+        # )
+        # return res
         return dict(
             input_ids=torch.tensor(token_list),
             position_ids=torch.tensor(position_ids),

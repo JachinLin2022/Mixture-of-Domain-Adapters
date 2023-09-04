@@ -87,6 +87,8 @@ class MixDAStageOneMLM(LightningModule):
             disable_moe=self.hparams.disable_moe,
         )
         self.model = RobertaForMaskedLM.from_pretrained(self.hparams.model_name, config=model_config).to(self.device)
+        # print(self.model)
+        # exit(0)
         self.ka_list = None if self.hparams.load_adapters is None or self.hparams.load_adapters == '' else [
             x for x in self.hparams.load_adapters.split(',')]
 
@@ -124,6 +126,7 @@ class MixDAStageOneMLM(LightningModule):
         self.mse_loss = torch.nn.MSELoss(reduction='none')
         
         self.model_filename = self.hparams.dirpath + '/model' + datetime.strftime(datetime.now(), '%Y%m%d-%H%M%S') + '.pt'
+        print(self.model_filename)
         
     def train_dataloader(self, shuffle=False):
         def map_dataset(x):

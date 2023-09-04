@@ -277,14 +277,14 @@ def parse_args():
 
 
 def main():
-    wandb.login(key='710f9ed51f388218c59dda998f08db93f481da29')
+    wandb.login(key='12efcd49d5fba2bec0a9bf9f5cd3651bbc8237e5')
     args = parse_args()
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
     # in the environment
     accelerator = (
-        Accelerator(log_with=args.report_to, logging_dir=args.output_dir) if args.with_tracking else Accelerator()
+        Accelerator(log_with=args.report_to) if args.with_tracking else Accelerator()
     )
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -301,6 +301,7 @@ def main():
         transformers.utils.logging.set_verbosity_error()
 
     # If passed along, set the training seed now.
+    print('seed is {}'.format(args.seed))
     if args.seed is not None:
         set_seed(args.seed)
 
@@ -368,7 +369,7 @@ def main():
         args.model_name_or_path,
         config=config,
     )
-    
+    print(model)
     # Add adapter and load knowledge adapter
     if args.load_mixda != '' and args.load_mixda is not None:
         mixdas = args.load_mixda.split(',')
@@ -416,6 +417,7 @@ def main():
         model.add_adapter(args.task_name, args.adapter_type, adapter_config)
         model.train_adapter(args.task_name, args.adapter_type)
     # We train MOE gate parameters!
+    # args.disable_moe = True
     if not args.disable_moe:
         for layer in args.layers:
             moe_gate = model.roberta.encoder.layer[layer].output.gating
@@ -509,6 +511,7 @@ def main():
     with accelerator.main_process_first():
         processed_datasets = raw_datasets.map(
             preprocess_function,
+            num_proc=16,
             batched=True,
             remove_columns=raw_datasets["train"].column_names,
             desc="Running tokenizer on dataset",
