@@ -55,7 +55,9 @@ from datasets import Dataset
 import sys
 from src import utils
 
+
 from src.models.transformers import RobertaForSequenceClassification, RobertaConfig
+
 from src.realm.realm import RealmRetriever
 from opendelta import LoraModel
 
@@ -212,7 +214,7 @@ def parse_args():
         "--adapter_type",
         type=str,
         choices=['pfeiffer', 'houlsby', 'lora', 'prefix_tuning'],
-        default='houlsby',
+        # default='houlsby',
         help="Type of adapter for downstream tasks"
     )
     parser.add_argument(
@@ -277,7 +279,7 @@ def parse_args():
 
 
 def main():
-    wandb.login(key='12efcd49d5fba2bec0a9bf9f5cd3651bbc8237e5')
+    # wandb.login(key='12efcd49d5fba2bec0a9bf9f5cd3651bbc8237e5')
     args = parse_args()
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
@@ -363,18 +365,21 @@ def main():
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
     mixdas = args.load_mixda.split(',') if args.load_mixda is not None else []
+    if args.adapter_type == '':
+        args.disable_moe = True
+
     config = RobertaConfig.from_pretrained(args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name, layers=args.layers, enable_attention=True, enable_old_ka=True, num_of_kas=len(mixdas), disable_moe=args.disable_moe,)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=not args.use_slow_tokenizer)
     model = RobertaForSequenceClassification.from_pretrained(
         args.model_name_or_path,
         config=config,
     )
-    print(model)
+
     # Add adapter and load knowledge adapter
     if args.load_mixda != '' and args.load_mixda is not None:
         mixdas = args.load_mixda.split(',')
         model.load_knowledge_adapter(mixdas)
-        print('ROME loaded!!1')
+        print('ROME loaded!!1',mixdas)
     else:
         print('Disabling parallel knowledge adapter')
     if args.load_task_adapter is not None:
@@ -412,8 +417,10 @@ def main():
     elif args.adapter_type == 'prefix_tuning':
             adapter_config = PrefixTuningConfig(flat=False, prefix_length=30)
     else:
-        raise NotImplementedError()
-    if args.adapter_type != 'lora' and args.load_task_adapter is None:
+        print('finetuning')
+        # raise NotImplementedError()
+
+    if args.adapter_type and args.adapter_type != 'lora' and args.load_task_adapter is None:
         model.add_adapter(args.task_name, args.adapter_type, adapter_config)
         model.train_adapter(args.task_name, args.adapter_type)
     # We train MOE gate parameters!
@@ -545,8 +552,8 @@ def main():
                 for key in examples.features.keys():
                     new_examples[key].append(examples[key][index])
                 label_count[label] += 1
-        
-        print('k-shot selection done!!')
+        print(label_count)
+        print('k-shot selection done!!', few_shot)
         
         return Dataset.from_dict(new_examples)
     

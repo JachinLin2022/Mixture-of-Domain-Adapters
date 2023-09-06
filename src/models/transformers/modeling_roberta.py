@@ -453,7 +453,7 @@ class RobertaLayer(nn.Module):
         self.ka = MixtureOfDomainAdapter(config, in_feature=config.hidden_size, 
                               mid_feature=config.intermediate_size, out_feature=config.hidden_size) if config.enable_new_ka else None
         self.gating = MoeGating(config.hidden_size, 768, 2, 3, 0.2) if config.enable_new_ka else None
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps) if self.ka is not None else None
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(

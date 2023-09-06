@@ -35,8 +35,8 @@ if __name__ == "__main__":
     if args.seed is not None:
         seed_everything(seed=args.seed)
 
-    wandb.login(key='710f9ed51f388218c59dda998f08db93f481da29')
-    logger = WandbLogger(project=args.project_name, name=args.run_name, entity='amano-aki')
+    wandb.login(key='12efcd49d5fba2bec0a9bf9f5cd3651bbc8237e5')
+    logger = WandbLogger(project=args.project_name, name=args.run_name)
 
     callbacks = [
         LearningRateMonitor(

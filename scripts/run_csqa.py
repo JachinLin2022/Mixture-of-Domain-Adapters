@@ -134,7 +134,7 @@ class Model(pl.LightningModule):
         self.x_train, self.y_train = preprocess(training_data, tokenizer, 32)
         self.x_val, self.y_val = preprocess(dataset["validation"], tokenizer, 32)
         self.ka_list = [] if self.hparams.load_adapters is None or self.hparams.load_adapters == '' else [x for x in self.hparams.load_adapters.split(',')]
-
+        print(self.ka_list)
         model_config = RobertaConfig.from_pretrained(
             self.hparams.model_name,
             layers=self.hparams.layers,
@@ -148,8 +148,8 @@ class Model(pl.LightningModule):
         if self.ka_list is not None and len(self.ka_list) > 0:
             self.model.load_knowledge_adapter(self.ka_list)
             print('adapter loaded!!!')
-        self.accuracy = Accuracy()
-        self.f1 = F1Score(num_classes=NUM_CHOICES, average='macro')
+        self.accuracy = Accuracy(task="multiclass", num_classes=NUM_CHOICES)
+        self.f1 = F1Score(task="multiclass", num_classes=NUM_CHOICES, average='macro')
         self.batch_size = self.hparams.batch_size
         
         if self.hparams.load_task_adapter is not None:
@@ -285,8 +285,8 @@ if __name__ == "__main__":
     if args.seed is not None:
         seed_everything(seed=args.seed)
 
-    wandb.login(key='710f9ed51f388218c59dda998f08db93f481da29')
-    logger = WandbLogger(project=args.project_name, name=args.run_name, entity='amano-aki')
+    wandb.login(key='12efcd49d5fba2bec0a9bf9f5cd3651bbc8237e5')
+    logger = WandbLogger(project=args.project_name, name=args.run_name)
 
     callbacks = [
         LearningRateMonitor(
