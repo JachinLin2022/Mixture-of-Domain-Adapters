@@ -1733,3 +1733,19 @@ class MoeGating(nn.Module):
         output = self.output(hid_states)
         return output
 
+class TaskAware(nn.Module):
+    def __init__(self, hid_size):
+        super().__init__()
+        self.query = nn.Linear(hid_size,hid_size)
+        self.key = nn.Linear(hid_size,hid_size)
+        self.value = nn.Linear(hid_size,hid_size)
+        self.softmax = nn.Softmax(dim=0)
+    def forward(self, x, adapter_x):
+        softmax_logits = []
+        x = self.query(x)
+        for adpater_output in adapter_x:
+            adpater_output = self.key(adpater_output)
+            softmax_logits.append(torch.dot(adpater_output.view(-1),x.view(-1)))
+        softmax_logits = torch.Tensor(softmax_logits)
+        output = self.softmax(softmax_logits)
+        return output
