@@ -15,7 +15,6 @@
 # limitations under the License.
 """ Finetuning the library models for sequence classification on GLUE."""
 # You can also adapt this script on your own text classification task. Pointers for this are left as comments.
-
 import logging
 import os
 import random
@@ -32,6 +31,7 @@ import transformers
 from transformers import (
     AutoConfig,
     AutoModelForSequenceClassification,
+    RobertaForSequenceClassification,
     AutoTokenizer,
     DataCollatorWithPadding,
     EvalPrediction,
@@ -42,6 +42,9 @@ from transformers import (
     default_data_collator,
     set_seed,
 )
+
+from src.models.transformers import RobertaForSequenceClassification, RobertaConfig
+
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
@@ -207,7 +210,8 @@ def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
-
+    import wandb
+    wandb.init(mode='disabled')
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
@@ -351,14 +355,23 @@ def main():
     #
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    config = AutoConfig.from_pretrained(
-        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
-        num_labels=num_labels,
-        finetuning_task=data_args.task_name,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
+    # config = AutoConfig.from_pretrained(
+    #     model_args.config_name if model_args.config_name else model_args.model_name_or_path,
+    #     num_labels=num_labels,
+    #     finetuning_task=data_args.task_name,
+    #     # cache_dir=model_args.cache_dir,
+    #     # revision=model_args.model_revision,
+    #     # use_auth_token=True if model_args.use_auth_token else None,
+    # )
+    # model = AutoModelForSequenceClassification.from_pretrained(
+    #     model_args.model_name_or_path,
+    #     # from_tf=bool(".ckpt" in model_args.model_name_or_path),
+    #     config=config,
+    #     # cache_dir=model_args.cache_dir,
+    #     # revision=model_args.model_revision,
+    #     # use_auth_token=True if model_args.use_auth_token else None,
+    #     # ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+    # )
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
@@ -366,16 +379,44 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    model = AutoModelForSequenceClassification.from_pretrained(
+    config = RobertaConfig.from_pretrained(model_args.model_name_or_path, num_labels=num_labels, finetuning_task=data_args.task_name, layers=[7,11], enable_attention=True, enable_old_ka=True, num_of_kas=1, disable_moe=False,adapter_down_scale=16)
+
+    
+    model = RobertaForSequenceClassification.from_pretrained(
         model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-        ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
     )
 
+    def enable_grad_by_module(
+        model,
+        module_names,
+    ):
+        def in_name(name):
+            return any(name.startswith(x) for x in module_names)
+        for n, m in model.named_modules():
+            print(n)
+            if in_name(n):
+                m.train(True)
+                for param in m.parameters():
+                    param.requires_grad = True
+            else:
+                m.train(False)
+                for param in m.parameters():
+                    param.requires_grad = False
+                    
+    # freeze parameters in some layers
+    # layer_list = []
+    # for layer in [7,11]:
+    #     layer_list.append('roberta.encoder.layer.{}.output.kas'.format(layer))
+    #     layer_list.append('roberta.encoder.layer.{}.output.gating'.format(layer))
+    # # utils.enable_grad_by_module(self.model, layer_list)
+    # print(layer_list)
+    # enable_grad_by_module(model, layer_list)
+
+    print('not frozen:')
+    for name, p in model.named_parameters():
+        if p.requires_grad:
+            print(name)
     # Preprocessing the raw_datasets
     if data_args.task_name is not None:
         sentence1_key, sentence2_key = task_to_keys[data_args.task_name]
@@ -486,8 +527,8 @@ def main():
         train_dataset = raw_datasets["train"]
         if data_args.max_train_samples is not None:
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
-            # train_dataset = train_dataset.select(range(max_train_samples))
-            train_dataset = preprocess_function_k_shot(train_dataset, data_args.max_train_samples)
+            train_dataset = train_dataset.select(range(max_train_samples))
+            # train_dataset = preprocess_function_k_shot(train_dataset, data_args.max_train_samples)
 
     if training_args.do_eval:
         if "validation" not in raw_datasets and "validation_matched" not in raw_datasets:

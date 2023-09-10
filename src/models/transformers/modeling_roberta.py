@@ -247,7 +247,7 @@ class RobertaSelfAttention(nn.Module):
             # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_layer, value_layer)
 
-        key_layer, value_layer, attention_mask = self.prefix_tuning(key_layer, value_layer, attention_mask)
+        key_layer, value_layer, attention_mask = self.prefix_tuning(key_layer, value_layer, hidden_states,attention_mask)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
@@ -382,8 +382,39 @@ class RobertaIntermediate(nn.Module):
         hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
 
+from transformers.activations import get_activation
+class Adapter(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.down = nn.Linear(1024,64)
+        self.act = get_activation('relu')
+        self.up = nn.Linear(64,1024)
+
+        self.down.apply(self.init_bert_weights)
+        self.up.apply(self.init_bert_weights)
+    def forward(self, hidden_state, input_tensor, layerNorm):
+        residual = hidden_state
+        hidden_state = layerNorm(hidden_state+input_tensor)
+
+        output = self.up(self.act(self.down(hidden_state)))
+        output = output + residual
+        return layerNorm(output + input_tensor)
+
+    @staticmethod
+    def init_bert_weights(module):
+        """Initialize the weights."""
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            # std defaults to 0.02, this might need to be changed
+            module.weight.data.normal_(mean=0.0, std=0.02)
+            print(module.weight.data)
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
 
 # Copied from transformers.models.bert.modeling_bert.BertOutput
+from transformers import PfeifferConfig
 class RobertaOutput(BertOutputAdaptersMixin, nn.Module):
     def __init__(self, config, layer):
         super().__init__()
@@ -392,44 +423,99 @@ class RobertaOutput(BertOutputAdaptersMixin, nn.Module):
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.enabled = (layer in config.layers) and config.enable_old_ka
+        self.task_aware = config.task_aware
+        # self.enabled = True
         adapter_list = []
+        tasks_list =[]
         self.kas = None
+        self.tasks = None
         if self.enabled:
             for _ in range(config.num_of_kas):
                 adapter_list.append(MixtureOfDomainAdapter(config))
+                # tasks_list.append(MixtureOfTaskAdapter(config.hidden_size, 48))
+            # tasks_list.append(MixtureOfTaskAdapter(config.hidden_size, 48))
             self.kas = nn.ModuleList(adapter_list)
+            # self.tasks = nn.ModuleList(tasks_list)
         # self.attn = RomeAttentionLayer(config) if self.enabled and config.enable_attention else None
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.gating = MoeGating(config.intermediate_size, 768, len(adapter_list) + 1, 3, 0.2) if self.enabled and not config.disable_moe else None
+        if self.task_aware:
+            # self.task_gate = MixtureOfDomainAdapter(config) if self.enabled and not config.disable_moe else None
+            self.gating = TaskAware(config.hidden_size, len(adapter_list) + 1, 0.2) if self.enabled and not config.disable_moe else None
+            # self.gating = None
+        else:
+            self.gating = MoeGating(config.intermediate_size, 768, len(adapter_list) + 1, 3, 0.2) if self.enabled and not config.disable_moe else None
+        self.ada = None
         # self.task_adapter = RomeAdapter(config, 16, config.hidden_size)
-        self._init_adapter_modules()
+        # self._init_adapter_modules()
+
 
     def forward(self, hidden_states, input_tensor):
-        all_results = None
-        if self.enabled and self.kas is not None:
-            all_results = []
-            for adapter in self.kas:
-                all_results.append(adapter(hidden_states))
-        if self.gating is not None:
-            gating_weights = self.gating(hidden_states)
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-        # if self.enabled and self.attn is not None:
-        #     hidden_states = self.attn(adapter_output, hidden_states, input_tensor)
-        if all_results is not None:
-            all_results.append(hidden_states)
+        if not self.task_aware:
+            all_results = None
+            if self.enabled and self.kas is not None:
+                all_results = []
+                for adapter in self.kas:
+                    all_results.append(adapter(hidden_states))
             if self.gating is not None:
-                final_output = torch.stack(all_results, dim=3) @ gating_weights.unsqueeze(3)
-                final_output = final_output.squeeze()
+                gating_weights = self.gating(hidden_states)
+            hidden_states = self.dense(hidden_states)
+            hidden_states = self.dropout(hidden_states)
+            # if self.enabled and self.attn is not None:
+            #     hidden_states = self.attn(adapter_output, hidden_states, input_tensor)
+            if all_results is not None:
+                all_results.append(hidden_states)
+                if self.gating is not None:
+                    final_output = torch.stack(all_results, dim=3) @ gating_weights.unsqueeze(3)
+                    final_output = final_output.squeeze()
+                else:
+                    final_output = all_results[0]
             else:
-                final_output = all_results[0]
+                final_output = hidden_states
+            # final_output = self.task_adapter(final_output)
+
+            # final_output = self.adapter_layer_forward(final_output, input_tensor, self.LayerNorm)
+            if self.ada is not None:
+                final_output = self.ada(final_output, input_tensor, self.LayerNorm)
+            else:
+                final_output = self.LayerNorm(final_output + input_tensor)
+            # print(final_output.shape)
+            if self.config.output_original:
+                return final_output, self.LayerNorm(hidden_states + input_tensor)
+            return final_output
         else:
-            final_output = hidden_states
-        # final_output = self.task_adapter(final_output)
-        final_output = self.adapter_layer_forward(final_output, input_tensor, self.LayerNorm)
-        if self.config.output_original:
-            return final_output, self.LayerNorm(hidden_states + input_tensor)
-        return final_output
+            all_results = None
+            downstream = None
+            if self.enabled and self.kas is not None:
+                all_results = []
+                for i,adapter in enumerate(self.kas):
+                    if i == len(self.kas) -1:
+                        downstream = adapter(hidden_states)
+                        break
+                    all_results.append(adapter(hidden_states))
+            # if self.gating is not None:
+            #     gating_weights = self.gating(hidden_states)
+                # task_gate = self.task_gate(hidden_states)
+            
+            hidden_states = self.dense(hidden_states)
+            hidden_states = self.dropout(hidden_states)
+            
+            final_output = torch.zeros_like(hidden_states)
+            if all_results is not None:
+                all_results.append(hidden_states)
+                if self.gating is not None:
+                    # for i,res in enumerate(all_results):
+                    #     final_output = final_output + self.tasks[i](res)
+                    final_output = self.gating(downstream, all_results)
+                else:
+                    final_output = all_results[0]
+            else:
+                final_output = hidden_states
+        
+            final_output = self.adapter_layer_forward(final_output, input_tensor, self.LayerNorm)
+            final_output = self.LayerNorm(final_output + input_tensor)
+            if self.config.output_original:
+                return final_output, self.LayerNorm(hidden_states + input_tensor)
+            return final_output
 
     def enable_adapter(self, enable):
         self.enabled = enable
@@ -727,12 +813,15 @@ class RobertaPreTrainedModel(PreTrainedModel):
         for n_ka, f in enumerate(f_list):
             checkpoint = torch.load(f, map_location='cuda:0')
             for i, layer in enumerate(encoder.layer):
-                if str(i) + '-adapter' in checkpoint:
-                    layer.output.kas[n_ka].load_state_dict(checkpoint[str(i) + '-adapter'])
+                if str(i)+ '-0' + '-adapter' in checkpoint:
+                    print('load '+ str(i)+ '-0' + '-adapter')
+                    layer.output.kas[n_ka].load_state_dict(checkpoint[str(i)+ '-0' + '-adapter'])
                 # if str(i) + '-attn' in checkpoint:
                     # layer.output.attn.load_state_dict(checkpoint[str(i) + '-attn'])
                 if str(i) + '-gating' in checkpoint and len(f_list) == 1 and layer.output.gating is not None:
-                    layer.output.gating.load_state_dict(checkpoint[str(i) + '-gating'])
+                    print('load '+ str(i) + '-gating')
+                    layer.output.gating.load_state_dict(checkpoint[str(i) +'-gating'])
+            break 
         if one_f is not None:
             checkpoint = torch.load(one_f, map_location='cuda:0')
             for i, layer in enumerate(encoder.layer):
@@ -1734,18 +1823,26 @@ class MoeGating(nn.Module):
         return output
 
 class TaskAware(nn.Module):
-    def __init__(self, hid_size):
+    def __init__(self, hid_size, num_adapter, dropout):
         super().__init__()
         self.query = nn.Linear(hid_size,hid_size)
         self.key = nn.Linear(hid_size,hid_size)
         self.value = nn.Linear(hid_size,hid_size)
-        self.softmax = nn.Softmax(dim=0)
+        self.softmax = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(dropout)
     def forward(self, x, adapter_x):
-        softmax_logits = []
-        x = self.query(x)
-        for adpater_output in adapter_x:
-            adpater_output = self.key(adpater_output)
-            softmax_logits.append(torch.dot(adpater_output.view(-1),x.view(-1)))
-        softmax_logits = torch.Tensor(softmax_logits)
-        output = self.softmax(softmax_logits)
+        output = x
+        # output = torch.empty_like(x)
+        q = self.query(x)
+        for i,adpater_output in enumerate(adapter_x):
+            k = self.key(adpater_output)
+            v = self.value(adpater_output)
+            attention_score = torch.matmul(q,k.transpose(-1,-2))
+            attention_probs = self.softmax(attention_score)
+            attention_probs = self.dropout(attention_probs)
+            attention_out = torch.matmul(attention_probs,v)
+            output = output + attention_out
+        # output = x
+        # for i,adpater_output in enumerate(adapter_x):
+        #     output = output + adpater_output
         return output

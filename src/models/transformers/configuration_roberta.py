@@ -64,7 +64,7 @@ class RobertaConfig(BertConfig):
 
     def __init__(self, pad_token_id=1, bos_token_id=0, eos_token_id=2, 
                  layers=[4,5], adapter_down_scale=1, attn_n_head=1, attn_dropout=0.1, enable_attention=True, output_original=False,
-                 enable_old_ka=False, enable_new_ka=False, num_of_kas=1, disable_moe=False,
+                 enable_old_ka=False, enable_new_ka=False, num_of_kas=1, disable_moe=False, task_aware=False, 
                  **kwargs):
         """Constructs RobertaConfig."""
         super().__init__(pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
@@ -78,6 +78,7 @@ class RobertaConfig(BertConfig):
         self.enable_new_ka = enable_new_ka
         self.num_of_kas = num_of_kas
         self.disable_moe = disable_moe
+        self.task_aware = task_aware
 
 class RobertaOnnxConfig(OnnxConfig):
     @property

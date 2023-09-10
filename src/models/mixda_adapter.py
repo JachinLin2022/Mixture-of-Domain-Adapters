@@ -40,7 +40,30 @@ class MixtureOfDomainAdapter(nn.Module):
         up = self.adapter_up(down)
         output = up
         return output
-    
+
+class MixtureOfTaskAdapter(nn.Module):
+    def __init__(self, dim, r):
+        super().__init__()
+        self.dim = dim
+        self.r = r
+        self.adapter_down = nn.Sequential(
+            nn.Linear(self.dim, self.r),
+            nn.GELU(),
+        )
+        self.adapter_up = nn.Linear(self.r, self.dim)
+        
+        # initialize weights
+        with torch.no_grad():
+            nn.init.kaiming_uniform_(self.adapter_down[0].weight, a=math.sqrt(5))
+            nn.init.zeros_(self.adapter_down[0].bias)
+            nn.init.zeros_(self.adapter_up.bias)
+            nn.init.zeros_(self.adapter_up.weight)
+    def forward(self, x):
+        down = self.adapter_down(x)
+        up = self.adapter_up(down)
+        output = up
+        return output
+
 # Attention Layer for Transformer outputs + mixture-of-domain adapters
 class MixDAAttentionLayer(nn.Module):
     def __init__(self, config):

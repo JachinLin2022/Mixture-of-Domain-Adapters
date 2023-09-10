@@ -240,7 +240,7 @@ class MixDAStageOneMLM(LightningModule):
         self.model.save_knowledge_adapter(self.model_filename + str(self.current_epoch))
         
     def tokenize_function(self, examples):
-        return self.tokenizer(examples['text'], return_special_tokens_mask=True)
+        return self.tokenizer(examples['text'], return_special_tokens_mask=True, max_length=512)
     
     def group_texts(self, examples):
         # Concatenate all texts.

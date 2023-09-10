@@ -3,7 +3,7 @@
 # This script is used for Stage 1 pretraining of MixDA.
 # You can specify the following parameters.
 # Example: bash stage_one_pretrain.sh model/test datasets/amazon/train.json test-project 20 1 3 1e-4 2e-4 "" 0
-# Example: bash stage_one_pretrain.sh model/test2 datasets/glue/train.json test-project 10 8 16 2e-4 2e-4 "" 0
+# Example: bash stage_one_pretrain.sh model/mlm4096_2 datasets/glue/train.json test-project 10 4 16 2e-4 2e-4 "" 0
 dirname=$1 # the directory to save the pre-trained model
 knowledge_path=$2 # path to domain knowledge
 project_name=$3 # the name of the project
@@ -35,6 +35,6 @@ python -m scripts.run_stage_one \
     --dirpath ${dirname} \
     --lr ${lr} \
     --moe_lr ${moa_lr} \
-    --adapter_down_scale 16 \
+    --adapter_down_scale 1 \
     ${other_params}
 

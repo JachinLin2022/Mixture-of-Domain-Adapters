@@ -255,6 +255,11 @@ def parse_args():
         type=int,
         default=16
     )
+    parser.add_argument(
+        '--task_aware',
+        type=int,
+        default=0
+    )
     args = parser.parse_args()
     if args.layers is None:
         args.layers = []
@@ -279,7 +284,8 @@ def parse_args():
 
 
 def main():
-    # wandb.login(key='12efcd49d5fba2bec0a9bf9f5cd3651bbc8237e5')
+    wandb.login(key='12efcd49d5fba2bec0a9bf9f5cd3651bbc8237e5')
+    # wandb.init(mode='disabled')
     args = parse_args()
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
@@ -368,7 +374,7 @@ def main():
     if args.adapter_type == '':
         args.disable_moe = True
 
-    config = RobertaConfig.from_pretrained(args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name, layers=args.layers, enable_attention=True, enable_old_ka=True, num_of_kas=len(mixdas), disable_moe=args.disable_moe,)
+    config = RobertaConfig.from_pretrained(args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name, layers=args.layers, enable_attention=True, enable_old_ka=True, num_of_kas=len(mixdas), disable_moe=args.disable_moe,task_aware=args.task_aware,adapter_down_scale=1)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=not args.use_slow_tokenizer)
     model = RobertaForSequenceClassification.from_pretrained(
         args.model_name_or_path,
@@ -382,6 +388,7 @@ def main():
         print('ROME loaded!!1',mixdas)
     else:
         print('Disabling parallel knowledge adapter')
+    
     if args.load_task_adapter is not None:
         model.load_adapter(args.load_task_adapter)
         model.train_adapter('domain', 'pfeiffer')
@@ -421,16 +428,35 @@ def main():
         # raise NotImplementedError()
 
     if args.adapter_type and args.adapter_type != 'lora' and args.load_task_adapter is None:
-        model.add_adapter(args.task_name, args.adapter_type, adapter_config)
-        model.train_adapter(args.task_name, args.adapter_type)
+
+        # model.add_adapter(args.task_name, adapter_config)
+        # model.train_adapter(args.task_name)
+        for layer in model.roberta.encoder.layer:
+            from src.models.transformers.modeling_roberta import Adapter
+            layer.output.ada = Adapter()
+        model.freeze_model()
+
+    
     # We train MOE gate parameters!
     # args.disable_moe = True
+
     if not args.disable_moe:
-        for layer in args.layers:
-            moe_gate = model.roberta.encoder.layer[layer].output.gating
-            for param in moe_gate.parameters():
-                param.requires_grad_(True)
-            
+        for layer in model.roberta.encoder.layer:
+            if layer.output.kas is not None and len(layer.output.kas) > 1:
+                for param in layer.output.kas[1].parameters():
+                    param.requires_grad_(True)
+        for layer in model.roberta.encoder.layer:
+            moe_gate = layer.output.gating
+            if moe_gate is not None:
+                for param in moe_gate.parameters():
+                    param.requires_grad_(True)
+        for layer in model.roberta.encoder.layer:
+            ada = layer.output.ada
+            if ada is not None:
+                for param in ada.parameters():
+                    param.requires_grad_(True)
+
+
     # enable REALM
     realm = None
     if args.realm_record is not None:
@@ -445,14 +471,14 @@ def main():
         sample_dataset = load_dataset(
             'wikipedia', '20220301.en'
         )['train']
-    
+    # print(model)
     print('=' * 50)
     print('The following parameters are not frozen:')
     for name, param in model.named_parameters():
         if param.requires_grad:
-            print(name)
+            print(name,param.shape,param.dtype)
     print('=' * 50)
-
+    # exit(0)
     # Preprocessing the datasets
     if args.task_name is not None:
         sentence1_key, sentence2_key = task_to_keys[args.task_name]
@@ -558,6 +584,7 @@ def main():
         return Dataset.from_dict(new_examples)
     
     if args.few_shot is not None:
+        # random.seed(1024)
         train_dataset = preprocess_function_k_shot(train_dataset, args.few_shot)
         
     # Log a few random samples from the training set:
@@ -585,10 +612,10 @@ def main():
     # Split weights in two groups, one with weight decay and the other not.
     no_decay = ["bias", "LayerNorm.weight"]
     moe_weights = []
-    if not args.disable_moe:
-        for layer in args.layers:
-            for p in model.roberta.encoder.layer[layer].output.gating.parameters():
-                moe_weights.append(p)
+    # if not args.disable_moe:
+    #     for layer in args.layers:
+    #         for p in model.roberta.encoder.layer[layer].output.gating.parameters():
+    #             moe_weights.append(p)
     optimizer_grouped_parameters = [
         {
             "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay) and p.requires_grad],
@@ -792,14 +819,14 @@ def main():
             else:
                 tok['labels'] = batch['labels']
             with torch.no_grad():
-                with utils.TraceDict(
-                    module=model.module if hasattr(model, 'module') else model,
-                    layers=moe_layers,
-                    retain_input=False,
-                    retain_output=True,
-                ) as tr:
+                # with utils.TraceDict(
+                #     module=model.module if hasattr(model, 'module') else model,
+                #     layers=moe_layers,
+                #     retain_input=False,
+                #     retain_output=True,
+                # ) as tr:
                     outputs = model(**tok)
-            if not args.disable_moe:
+            if 0 and not args.disable_moe:
                 for layer in args.layers:
                     weights = tr['roberta.encoder.layer.{}.output.gating'.format(layer)].output[:,:,0]
                     for w in weights:
@@ -819,7 +846,7 @@ def main():
             )
 
         eval_metric = metric.compute()
-        logger.info(f"epoch {epoch}: {eval_metric}, mixda_weights: {np.mean(all_mixda_weights)} +- {np.std(all_mixda_weights)}")
+        logger.info(f"epoch {epoch}: {eval_metric}, mixda_weights: {np.mean(all_mixda_weights)} +- {np.std(all_mixda_weights)}, loss: {total_loss.item() / len(train_dataloader)}")
         
         # for m in metrics:
         #     best_metrics[m] = max(best_metrics[m], eval_metric[m])

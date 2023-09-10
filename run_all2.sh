@@ -1,9 +1,9 @@
 # task_name=cola
 # shot=64
 shots=(16)
-seeds=(42 1024 999)
-# tasks=(cola rte wnli csqa sst2 qnli mnli stsb)
-tasks=(cola csqa rte wnli qnli sst2)
+seeds=(42)
+tasks=(cola sst2 rte)
+# tasks=(cola csqa rte wnli qnli sst2)
 lrs=(1e-4 5e-4)
 batchs=(2 4)
 device=1
@@ -24,14 +24,14 @@ device=1
 
 for task_name in "${tasks[@]}"; do
     for seed in "${seeds[@]}"; do
-        shot=16
-        lr=1e-4
-        batch=2
-        # bash stage_two.sh 1 ${shot} ${task_name} 1e-5 100 5 finetune "" "" "" "" duibi finetune_${shot}_${seed} ${seed} 0
-        # bash stage_two.sh ${device} ${shot} ${task_name} ${lr} 100 ${batch} pfeiffer-mixda "model/mlm/model.pt,/root/SimCSE/result/test2/model_5.pt" "" "" "" duibi cl_ml_${lr}_${batch}_${shot}_${seed} ${seed} 0
-        bash stage_two.sh ${device} ${shot} ${task_name} ${lr} 100 ${batch} pfeiffer-mixda "/root/Mixture-of-Domain-Adapters/model/model.pt,model/mlm/model.pt" "" "" "" duibi csqa_ml_${lr}_${batch}_${shot}_${seed} ${seed} 0
+        for shot in "${shots[@]}"; do
+            bash stage_two.sh 1 ${shot} ${task_name} 1e-4 100 5 pfeiffer-mixda "/root/Mixture-of-Domain-Adapters/model/mlm4096/model20230908-202139.pt0" "" "" "" ffff mlm_${shot}_${seed} ${seed} 0
+            bash stage_two.sh 1 ${shot} ${task_name} 1e-4 100 5 pfeiffer-mixda "/root/Mixture-of-Domain-Adapters/model/mlm4096/model20230908-202139.pt0,/root/SimCSE/result/test4096/model_4000.pt" "" "" "" ffff add_one_mlm_${shot}_${seed} ${seed} 0
+            bash stage_two.sh 1 ${shot} ${task_name} 1e-5 100 5 finetune "" "" "" "" ffff finetune_${shot}_${seed} ${seed} 0
+        done
     done
 done
+
 # for lr in "${lrs[@]}"; do
 #     for batch in "${batchs[@]}"; do
 #             shot=16

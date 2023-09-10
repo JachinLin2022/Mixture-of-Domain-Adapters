@@ -1,18 +1,14 @@
-from datasets import load_dataset
-from transformers import RobertaTokenizerFast
-sample_dataset_raw = load_dataset(
-                'wikipedia', '20220301.en'
-            )
-tokenizer = RobertaTokenizerFast.from_pretrained('roberta-large')
+import torch
 
+torch.manual_seed(42)
 
+module = torch.nn.Linear(10, 10)
+print(123123123)
+print(123123123)
+# 第一次调用
+module.weight.data.normal_(mean=0.0, std=0.02)
+print(module.weight.data)
 
-from src.data.tok_dataset import TokenizedDataset
-
-sample_dataset = TokenizedDataset(
-    sample_dataset_raw['train'], 
-    tokenizer, 
-    maxlen=512
-)
-# sample_dataset[19958, 33265, 33783]
-sample_dataset[1,2,3]
+# # 第二次调用
+# module.weight.data.normal_(mean=0.0, std=0.02)
+# print(module.weight.data)

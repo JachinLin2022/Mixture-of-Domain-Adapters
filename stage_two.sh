@@ -34,6 +34,7 @@ test_path=${11}
 project_name=${12} # project name for wandb
 run_name=${13}
 seed=${14}
+task_aware=${15}
 
 
 # $1: dataset, $2: lr, $3: batch, $4: type, $5: seed
@@ -48,7 +49,7 @@ run_others() {
         add_arguments="${add_arguments} --load_adapters ${stage_one_path} --layers 7,11"
     fi
     if [[ ${4%-*} != "finetune" ]]; then
-        add_arguments="${add_arguments} --adapter_type ${4%-*} --reduction_factor 16 --adapter_non_linearity swish"
+        add_arguments="${add_arguments} --adapter_type ${4%-*} --reduction_factor 16 --adapter_non_linearity relu"
     fi
     if [[ $shots != 0 ]]; then
         add_arguments="${add_arguments} --few_shot $shots"
@@ -70,7 +71,7 @@ run_glue() {
         add_arguments="${add_arguments} --load_mixda ${stage_one_path} --layers 7,11"
     fi
     if [[ ${4%-*} != "finetune" ]]; then
-        add_arguments="${add_arguments} --adapter_type ${4%-*} --reduction_factor 16 --adapter_non_linearity swish"
+        add_arguments="${add_arguments} --adapter_type ${4%-*} --reduction_factor 1 --adapter_non_linearity swish"
     fi
     if [[ $shots != 0 ]]; then
         add_arguments="${add_arguments} --few_shot $shots"
@@ -78,7 +79,7 @@ run_glue() {
 
     WANDB_PROJECT=${project_name} WANDB_NAME=${run_name}_${1}  \
         accelerate launch --num_processes ${devices} -m scripts.run_glue --seed ${5} --task_name $1 --model_name_or_path roberta-large \
-        --num_train_epochs ${max_epochs} --report_to wandb \
+        --num_train_epochs ${max_epochs} --report_to wandb --task_aware ${6}\
         --with_tracking --learning_rate $2 --checkpointing_steps=no --output_dir=results/${run_name} \
         --project_name ${project_name} --per_device_train_batch_size ${3} --per_device_eval_batch_size 256 $add_arguments
 }
@@ -110,17 +111,17 @@ run_one() {
     dataset=$1
     case "$dataset" in
         csqa)
-            run_csqa $1 $2 $3 $4 $5
+            run_csqa $1 $2 $3 $4 $5 $6
             ;;
         cola|sst2|mrpc|qqp|stsb|mnli|qnli|rte|wnli)
-            run_glue $1 $2 $3 $4 $5
+            run_glue $1 $2 $3 $4 $5 $6
             ;;
         *)
-            run_others $1 $2 $3 $4 $5
+            run_others $1 $2 $3 $4 $5 $6
             ;;
     esac
 }
 
 
 # seed=$RANDOM
-run_one $dataset_name $lr $batch_size $type $seed
+run_one $dataset_name $lr $batch_size $type $seed $task_aware
