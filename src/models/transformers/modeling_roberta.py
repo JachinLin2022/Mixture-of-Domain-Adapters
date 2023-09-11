@@ -415,7 +415,7 @@ class Adapter(nn.Module):
 
 # Copied from transformers.models.bert.modeling_bert.BertOutput
 from transformers import PfeifferConfig
-class RobertaOutput(BertOutputAdaptersMixin, nn.Module):
+class RobertaOutput(nn.Module):
     def __init__(self, config, layer):
         super().__init__()
         self.config = config
@@ -424,7 +424,6 @@ class RobertaOutput(BertOutputAdaptersMixin, nn.Module):
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.enabled = (layer in config.layers) and config.enable_old_ka
         self.task_aware = config.task_aware
-        # self.enabled = True
         adapter_list = []
         tasks_list =[]
         self.kas = None
@@ -439,10 +438,10 @@ class RobertaOutput(BertOutputAdaptersMixin, nn.Module):
         # self.attn = RomeAttentionLayer(config) if self.enabled and config.enable_attention else None
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         if self.task_aware:
-            # self.task_gate = MixtureOfDomainAdapter(config) if self.enabled and not config.disable_moe else None
             self.gating = TaskAware(config.hidden_size, len(adapter_list) + 1, 0.2) if self.enabled and not config.disable_moe else None
-            # self.gating = None
         else:
+            # self.gating = None
+            print(111111111)
             self.gating = MoeGating(config.intermediate_size, 768, len(adapter_list) + 1, 3, 0.2) if self.enabled and not config.disable_moe else None
         self.ada = None
         # self.task_adapter = RomeAdapter(config, 16, config.hidden_size)
@@ -464,9 +463,10 @@ class RobertaOutput(BertOutputAdaptersMixin, nn.Module):
             #     hidden_states = self.attn(adapter_output, hidden_states, input_tensor)
             if all_results is not None:
                 all_results.append(hidden_states)
-                if self.gating is not None:
+                if 1 or self.gating is not None:
                     final_output = torch.stack(all_results, dim=3) @ gating_weights.unsqueeze(3)
                     final_output = final_output.squeeze()
+                    # final_output = hidden_states
                 else:
                     final_output = all_results[0]
             else:
@@ -804,6 +804,33 @@ class RobertaPreTrainedModel(PreTrainedModel):
             if layer.output.gating is not None:
                 dict[str(i) + '-gating'] = layer.output.gating.state_dict()
         torch.save(dict, f)
+    
+    def save_task_adapter(self, f):
+        if hasattr(self, "roberta"):
+            encoder = self.roberta.encoder
+        else:
+            encoder = self.encoder
+        dict = {}
+        for i, layer in enumerate(encoder.layer):
+            if layer.output.ada is not None:
+                print(str(i) + '-adapter')
+                dict[str(i) + '-adapter'] = layer.output.ada.state_dict()
+
+        torch.save(dict, f)
+
+    def load_task_adapter(self, f):
+        if hasattr(self, "roberta"):
+            encoder = self.roberta.encoder
+        else:
+            encoder = self.encoder
+
+        checkpoint = torch.load(f, map_location='cuda:0')
+        for i, layer in enumerate(encoder.layer):
+            if str(i) + '-adapter' in checkpoint:
+                print('load task '+ str(i) + '-adapter')
+                layer.output.ada.load_state_dict(checkpoint[str(i) + '-adapter'])
+                # print(checkpoint[str(i) + '-adapter'])
+
     
     def load_knowledge_adapter(self, f_list, one_f=None):
         if hasattr(self, "roberta"):

@@ -187,7 +187,7 @@ def parse_args():
     parser.add_argument(
         "--report_to",
         type=str,
-        default="all",
+        default="none",
         help=(
             'The integration to report the results and logs to. Supported platforms are `"tensorboard"`,'
             ' `"wandb"` and `"comet_ml"`. Use `"all"` (default) to report to all integrations.'
@@ -422,29 +422,29 @@ def main():
         delta_model = LoraModel(model, args.lora_r, args.lora_alpha)
         delta_model.freeze_module(exclude=["deltas", "layernorm_embedding"], set_state_dict=True)
     elif args.adapter_type == 'prefix_tuning':
-            adapter_config = PrefixTuningConfig(flat=False, prefix_length=30)
+        adapter_config = PrefixTuningConfig(flat=False, prefix_length=30)
     else:
         print('finetuning')
         # raise NotImplementedError()
 
     if args.adapter_type and args.adapter_type != 'lora' and args.load_task_adapter is None:
-
         # model.add_adapter(args.task_name, adapter_config)
         # model.train_adapter(args.task_name)
         for layer in model.roberta.encoder.layer:
             from src.models.transformers.modeling_roberta import Adapter
             layer.output.ada = Adapter()
         model.freeze_model()
-
+        
+    # model.save_task_adapter('/root/Mixture-of-Domain-Adapters/model/test.pt')
+    model.load_task_adapter('/root/Mixture-of-Domain-Adapters/model/test.pt')
     
     # We train MOE gate parameters!
     # args.disable_moe = True
-
     if not args.disable_moe:
-        for layer in model.roberta.encoder.layer:
-            if layer.output.kas is not None and len(layer.output.kas) > 1:
-                for param in layer.output.kas[1].parameters():
-                    param.requires_grad_(True)
+        # for layer in model.roberta.encoder.layer:
+        #     if layer.output.kas is not None and len(layer.output.kas) >= 2:
+        #         for param in layer.output.kas[0].parameters():
+        #             param.requires_grad_(True)
         for layer in model.roberta.encoder.layer:
             moe_gate = layer.output.gating
             if moe_gate is not None:
@@ -455,8 +455,9 @@ def main():
             if ada is not None:
                 for param in ada.parameters():
                     param.requires_grad_(True)
-
-
+                    print(param)
+        # for n,p in model.classifier.named_parameters():
+        #     print(n,p)
     # enable REALM
     realm = None
     if args.realm_record is not None:
@@ -584,7 +585,7 @@ def main():
         return Dataset.from_dict(new_examples)
     
     if args.few_shot is not None:
-        # random.seed(1024)
+        # random.seed(42)
         train_dataset = preprocess_function_k_shot(train_dataset, args.few_shot)
         
     # Log a few random samples from the training set:
@@ -612,10 +613,12 @@ def main():
     # Split weights in two groups, one with weight decay and the other not.
     no_decay = ["bias", "LayerNorm.weight"]
     moe_weights = []
-    # if not args.disable_moe:
-    #     for layer in args.layers:
-    #         for p in model.roberta.encoder.layer[layer].output.gating.parameters():
-    #             moe_weights.append(p)
+    print(args.weight_decay)
+    if not args.disable_moe:
+        for layer in args.layers:
+            if model.roberta.encoder.layer[layer].output.gating is not None:
+                for p in model.roberta.encoder.layer[layer].output.gating.parameters():
+                    moe_weights.append(p)
     optimizer_grouped_parameters = [
         {
             "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay) and p.requires_grad],
@@ -786,6 +789,8 @@ def main():
         samples_seen = 0
         moe_layers = ['roberta.encoder.layer.{}.output.gating'.format(layer) for layer in args.layers] if not args.disable_moe else []
         all_mixda_weights = []
+        print(555)
+        record_debug = 0
         for step, batch in enumerate(eval_dataloader):
             if sentence2_key is None:
                 tok = tokenizer(
@@ -819,16 +824,23 @@ def main():
             else:
                 tok['labels'] = batch['labels']
             with torch.no_grad():
-                # with utils.TraceDict(
-                #     module=model.module if hasattr(model, 'module') else model,
-                #     layers=moe_layers,
-                #     retain_input=False,
-                #     retain_output=True,
-                # ) as tr:
+                if record_debug:
+                    with utils.TraceDict(
+                        module=model.module if hasattr(model, 'module') else model,
+                        layers=moe_layers,
+                        retain_input=False,
+                        retain_output=True,
+                    ) as tr:
+                        outputs = model(**tok)
+                else:
                     outputs = model(**tok)
-            if 0 and not args.disable_moe:
+            if  record_debug and not args.disable_moe:
                 for layer in args.layers:
+                    output = tr['roberta.encoder.layer.{}.output.gating'.format(layer)].output
                     weights = tr['roberta.encoder.layer.{}.output.gating'.format(layer)].output[:,:,0]
+                    w1 = torch.mean(output[:,:,0],dim=0)
+                    w2 = torch.mean(output[:,:,1],dim=0)
+                    print(w1,w2)
                     for w in weights:
                         all_mixda_weights.append(w.item())
             predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
